@@ -1,0 +1,6 @@
+@HistorialClinico.Api_HostAddress = http://localhost:5036
+
+GET {{HistorialClinico.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

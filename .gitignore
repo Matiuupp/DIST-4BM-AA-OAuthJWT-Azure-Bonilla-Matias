@@ -1,0 +1,15 @@
+# Archivos de compilacion de .NET
+bin/
+obj/
+
+# Configuracion local de Visual Studio
+.vs/
+*.user
+*.suo
+
+# Archivos de usuario del proyecto
+*.csproj.user
+
+# Logs y temporales
+*.log
+*.tmp

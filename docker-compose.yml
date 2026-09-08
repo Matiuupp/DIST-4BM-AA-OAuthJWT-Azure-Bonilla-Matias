@@ -1,0 +1,159 @@
+services:
+    rabbitmq:
+        image: rabbitmq:4-management
+        container_name: rabbitmq-pacientes
+
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+
+        environment:
+            RABBITMQ_DEFAULT_USER: admin
+            RABBITMQ_DEFAULT_PASS: admin123
+
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+        networks:
+            - pacientes-network
+
+    oauthjwt:
+        build:
+            context: .\OAuthJWT
+            dockerfile: Dockerfile
+
+        container_name: oauthjwt-container
+
+        ports:
+            - "8089:8080"
+
+        environment:
+            ASPNETCORE_ENVIRONMENT: Development
+            ASPNETCORE_URLS: "http://+:8080"
+
+            # Los mismos valores en los tres servicios: quien firma y quien
+            # valida deben coincidir o el token se rechaza
+            Jwt__Key: "ClaveSuperSecretaParaJWT123456789"
+            Jwt__Issuer: "OAuthJWT"
+            Jwt__Audience: "MicroserviciosPacientes"
+            Jwt__ExpireMinutes: 60
+
+        networks:
+            - pacientes-network
+
+    pacientes:
+        build:
+            context: .\Pacientes.Api
+            dockerfile: Dockerfile
+
+        container_name: pacientes-api-container
+
+        ports:
+            - "8087:8080"
+
+        environment:
+            ASPNETCORE_ENVIRONMENT: Development
+            ASPNETCORE_URLS: "http://+:8080"
+
+            ConnectionStrings__PacientesConnection: >-
+                Server=host.docker.internal,1433;
+                Database=PacientesDB;
+                User Id=usuario_librosB;
+                Password=1234;
+                TrustServerCertificate=True;
+                Encrypt=False;
+
+            RabbitMQ__HostName: rabbitmq
+            RabbitMQ__Port: 5672
+            RabbitMQ__UserName: admin
+            RabbitMQ__Password: admin123
+            RabbitMQ__QueueCreado: paciente_creado
+            RabbitMQ__QueueDesactivado: paciente_desactivado
+
+            # Solo valida, no emite: no necesita ExpireMinutes
+            Jwt__Key: "ClaveSuperSecretaParaJWT123456789"
+            Jwt__Issuer: "OAuthJWT"
+            Jwt__Audience: "MicroserviciosPacientes"
+
+        depends_on:
+            rabbitmq:
+                condition: service_healthy
+        networks:
+            - pacientes-network
+
+    historial:
+        build:
+            context: .\HistorialClinico.Api
+            dockerfile: Dockerfile
+
+        container_name: historial-api-container
+
+        ports:
+            - "8088:8080"
+
+        environment:
+            ASPNETCORE_ENVIRONMENT: Development
+            ASPNETCORE_URLS: "http://+:8080"
+
+            ConnectionStrings__HistorialConnection: >-
+                Server=host.docker.internal,1433;
+                Database=HistorialDB;
+                User Id=usuario_librosB;
+                Password=1234;
+                TrustServerCertificate=True;
+                Encrypt=False;
+
+            RabbitMQ__HostName: rabbitmq
+            RabbitMQ__Port: 5672
+            RabbitMQ__UserName: admin
+            RabbitMQ__Password: admin123
+            RabbitMQ__QueueCreado: paciente_creado
+            RabbitMQ__QueueDesactivado: paciente_desactivado
+
+            Jwt__Key: "ClaveSuperSecretaParaJWT123456789"
+            Jwt__Issuer: "OAuthJWT"
+            Jwt__Audience: "MicroserviciosPacientes"
+
+        depends_on:
+            rabbitmq:
+                condition: service_healthy
+        networks:
+            - pacientes-network
+
+    apigateway:
+        build:
+            context: .\ApiGateway
+            dockerfile: Dockerfile
+
+        container_name: apigateway-container
+
+        ports:
+            - "8000:8080"
+
+        environment:
+            ASPNETCORE_ENVIRONMENT: Development
+            ASPNETCORE_URLS: "http://+:8080"
+
+            ReverseProxy__Clusters__pacientesCluster__Destinations__pacientesDestination__Address: >-
+                http://pacientes:8080/
+
+            ReverseProxy__Clusters__historialCluster__Destinations__historialDestination__Address: >-
+                http://historial:8080/
+
+            ReverseProxy__Clusters__authCluster__Destinations__authDestination__Address: >-
+                http://oauthjwt:8080/
+
+        depends_on:
+            - pacientes
+            - historial
+            - oauthjwt
+
+        networks:
+            - pacientes-network
+
+networks:
+    pacientes-network:
+        driver: bridge

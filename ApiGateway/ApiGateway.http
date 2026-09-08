@@ -1,0 +1,75 @@
+@ApiGateway = http://localhost:8000
+
+### Listar todos los pacientes activos
+GET {{ApiGateway}}/api/Pacientes
+Accept: application/json
+
+### Obtener un paciente por su id
+GET {{ApiGateway}}/api/Pacientes/2
+Accept: application/json
+
+### Crear un paciente nuevo (dispara el evento en RabbitMQ)
+POST {{ApiGateway}}/api/Pacientes
+Content-Type: application/json
+
+{
+  "idPaciente": 0,
+  "cedula": "0612345678",
+  "nombre": "Pedro",
+  "apellido": "Salazar",
+  "direccion": "La Magdalena",
+  "estado": true
+}
+
+### Actualizar un paciente (el id de la ruta debe coincidir con el del cuerpo)
+PUT {{ApiGateway}}/api/Pacientes/2
+Content-Type: application/json
+
+{
+  "idPaciente": 2,
+  "cedula": "0609876543",
+  "nombre": "Luis",
+  "apellido": "Cevallos",
+  "direccion": "Av. Amazonas",
+  "estado": true
+}
+
+### Desactivar un paciente (borrado logico + evento en RabbitMQ)
+DELETE {{ApiGateway}}/api/Pacientes/2
+
+### Listar todos los historiales activos
+GET {{ApiGateway}}/api/HistorialClinico
+Accept: application/json
+
+### Historiales de un paciente (aqui se ve la relacion 1:N)
+GET {{ApiGateway}}/api/HistorialClinico/paciente/1
+Accept: application/json
+
+### Crear un historial manualmente
+POST {{ApiGateway}}/api/HistorialClinico
+Content-Type: application/json
+
+{
+  "idHistorial": 0,
+  "idPaciente": 2,
+  "numHistoria": "HC-0010",
+  "diagnostico": "Migrana cronica",
+  "tratamiento": "Ibuprofeno 400mg",
+  "estado": true
+}
+
+### Editar diagnostico y tratamiento de un historial
+PUT {{ApiGateway}}/api/HistorialClinico/3
+Content-Type: application/json
+
+{
+  "idHistorial": 3,
+  "idPaciente": 2,
+  "numHistoria": "HC-0003",
+  "diagnostico": "Gastritis cronica",
+  "tratamiento": "Omeprazol 40mg en ayunas",
+  "estado": true
+}
+
+### Desactivar un historial
+DELETE {{ApiGateway}}/api/HistorialClinico/3
