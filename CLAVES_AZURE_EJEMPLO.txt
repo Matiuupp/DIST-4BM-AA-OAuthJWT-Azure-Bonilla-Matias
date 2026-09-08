@@ -1,0 +1,88 @@
+==============================================================
+CLAVES Y CREDENCIALES - ARCHIVO DE EJEMPLO
+Proyecto: Microservicios Pacientes / Historial Clinico
+==============================================================
+
+IMPORTANTE: este archivo contiene UNICAMENTE valores de ejemplo
+y marcadores de posicion. Las credenciales reales no se publican
+en el repositorio y se configuran como variables de entorno en
+los Container Apps de Azure.
+
+--------------------------------------------------------------
+1. AZURE SQL DATABASE
+--------------------------------------------------------------
+Servidor        : sql-pacientes-matias-26.database.windows.net
+Puerto          : 1433
+Usuario admin   : adminsql
+Contrasena      : <CONTRASENA_SQL>
+
+Bases de datos  : PacientesDB
+                  HistorialDB
+
+Formato de la cadena de conexion:
+Server=tcp:<SERVIDOR>.database.windows.net,1433;
+Database=<NOMBRE_BASE>;
+User ID=<USUARIO>;
+Password=<CONTRASENA_SQL>;
+Encrypt=True;
+TrustServerCertificate=False;
+
+--------------------------------------------------------------
+2. AZURE CONTAINER REGISTRY
+--------------------------------------------------------------
+Servidor        : acrpacientesmatias.azurecr.io
+Usuario         : acrpacientesmatias
+Contrasena      : <CONTRASENA_ACR>
+
+Para obtener la contrasena real:
+az acr credential show --name acrpacientesmatias --query "passwords[0].value" -o tsv
+
+--------------------------------------------------------------
+3. JWT (servicio OAuthJWT)
+--------------------------------------------------------------
+Key             : <CLAVE_JWT_SECRETA>
+Issuer          : OAuthJWT
+Audience        : MicroserviciosPacientes
+ExpireMinutes   : 60
+
+NOTA: los tres microservicios (OAuthJWT, Pacientes.Api e
+HistorialClinico.Api) deben compartir exactamente la misma Key,
+Issuer y Audience. Si alguno difiere, el token es rechazado
+aunque sea valido.
+
+--------------------------------------------------------------
+4. RABBITMQ
+--------------------------------------------------------------
+Host interno    : rabbitmq
+Puerto AMQP     : 5672
+Usuario         : <USUARIO_RABBITMQ>
+Contrasena      : <CONTRASENA_RABBITMQ>
+
+Colas utilizadas:
+  paciente_creado
+  paciente_desactivado
+
+--------------------------------------------------------------
+5. USUARIOS DE PRUEBA DEL SISTEMA
+--------------------------------------------------------------
+Estos usuarios estan definidos en el AuthController del servicio
+OAuthJWT y sirven para obtener el token JWT. No son credenciales
+de infraestructura, sino datos de uso de la aplicacion, por eso
+se documentan con sus valores reales:
+
+Usuario: admin    Password: 1234    Rol: Administrador
+Usuario: medico   Password: 1234    Rol: Usuario
+
+El rol Administrador puede crear, editar y eliminar.
+El rol Usuario solo puede consultar.
+
+--------------------------------------------------------------
+RECOMENDACIONES DE SEGURIDAD
+--------------------------------------------------------------
+- Las contrasenas deben combinar mayusculas, minusculas,
+  numeros y caracteres especiales.
+- No reutilizar contrasenas personales.
+- Generar las claves con un generador de contrasenas confiable.
+- No publicar contrasenas reales, JWT Keys ni secretos en un
+  repositorio publico.
+==============================================================
