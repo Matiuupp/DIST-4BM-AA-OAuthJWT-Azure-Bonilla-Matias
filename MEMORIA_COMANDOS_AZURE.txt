@@ -2,15 +2,26 @@
 MEMORIA DE COMANDOS - DESPLIEGUE EN AZURE
 Proyecto: Microservicios Pacientes / Historial Clinico
 Estudiante: Matias Bonilla - 4to "B" DSW
+Materia: Aplicaciones Distribuidas
 ==============================================================
 
-NOTA: los secretos reales fueron reemplazados por marcadores
-de posicion (<...>). Los valores verdaderos se configuran como
-variables de entorno en Azure y no se publican.
+RECURSOS CREADOS EN AZURE
+--------------------------------------------------------------
+Resource Group              : rg-pacientes-aa          (East US)
+Container Registry          : acrpacientesmatias       (East US)
+SQL Server                  : sql-pacientes-matias-26  (Central US)
+  Bases                     : PacientesDB, HistorialDB
+Container Apps Environment  : env-pacientes            (Central US)
+Container Apps              : rabbitmq, oauthjwt, pacientes,
+                              historial, apigateway
 
---------------------------------------------------------------
+Dominio generado por el entorno:
+  mangorock-874cd57f.centralus.azurecontainerapps.io
+
+
+==============================================================
 1. INSTALACION Y AUTENTICACION
---------------------------------------------------------------
+==============================================================
 
 winget install -e --id Microsoft.AzureCLI
 
@@ -19,9 +30,9 @@ az version
 az login
 
 
---------------------------------------------------------------
+==============================================================
 2. REGISTRO DE PROVEEDORES
---------------------------------------------------------------
+==============================================================
 Las suscripciones nuevas no traen todos los servicios activos.
 Estos comandos los habilitan una sola vez.
 
@@ -33,160 +44,314 @@ az provider register --namespace Microsoft.OperationalInsights
 az provider show --namespace Microsoft.ContainerRegistry --query registrationState -o tsv
 
 
---------------------------------------------------------------
+==============================================================
 3. RESOURCE GROUP
---------------------------------------------------------------
+==============================================================
 
 az group create --name rg-pacientes-aa --location eastus
 
+az group list --output table
 
---------------------------------------------------------------
+
+==============================================================
 4. AZURE CONTAINER REGISTRY
---------------------------------------------------------------
+==============================================================
 
 az acr create --resource-group rg-pacientes-aa --name acrpacientesmatias --sku Basic --admin-enabled true
 
+az acr list --resource-group rg-pacientes-aa --output table
 
---------------------------------------------------------------
+
+==============================================================
 5. AZURE SQL DATABASE
+==============================================================
+
+5.1 Servidor logico
 --------------------------------------------------------------
-El servidor logico se creo desde el portal de Azure porque las
-regiones East US y West US 2 no aceptaban servidores SQL nuevos
-para esta suscripcion. La region que si acepto fue Central US.
+El servidor se creo desde el portal de Azure porque las regiones
+East US y West US 2 no aceptaban servidores SQL nuevos para esta
+suscripcion. La region que si acepto fue Central US.
 
 Datos utilizados:
   Nombre    : sql-pacientes-matias-26
   Region    : Central US
   Usuario   : adminsql
-  Password  : <CONTRASENA_SQL>
+  Password  : <CONTRASENA_ADMIN_SQL>
   Firewall  : "Permitir que los servicios de Azure accedan" = Si
 
 Comando equivalente por CLI:
-az sql server create --name sql-pacientes-matias-26 --resource-group rg-pacientes-aa --location centralus --admin-user adminsql --admin-password <CONTRASENA_SQL>
 
-Creacion de las dos bases:
+az sql server create --name sql-pacientes-matias-26 --resource-group rg-pacientes-aa --location centralus --admin-user adminsql --admin-password <CONTRASENA_ADMIN_SQL>
+
+
+5.2 Bases de datos
+--------------------------------------------------------------
 
 az sql db create --resource-group rg-pacientes-aa --server sql-pacientes-matias-26 --name PacientesDB --service-objective Basic --backup-storage-redundancy Local
 
 az sql db create --resource-group rg-pacientes-aa --server sql-pacientes-matias-26 --name HistorialDB --service-objective Basic --backup-storage-redundancy Local
 
-Regla de firewall para el equipo local (necesaria para ejecutar
-los scripts desde SQL Server Management Studio):
+
+5.3 Reglas de firewall
+--------------------------------------------------------------
+Necesarias para ejecutar los scripts desde SQL Server Management
+Studio. La IP publica cambia al cambiar de red, por lo que se
+crea una regla por cada ubicacion desde la que se trabaja.
 
 curl ifconfig.me
 
 az sql server firewall-rule create --resource-group rg-pacientes-aa --server sql-pacientes-matias-26 --name MiPC --start-ip-address <IP_PUBLICA> --end-ip-address <IP_PUBLICA>
 
+
+5.4 Creacion de las tablas
+--------------------------------------------------------------
 Los scripts BaseDatos/Azure_PacientesDB.sql y
 BaseDatos/Azure_HistorialClinicoDB.sql se ejecutaron desde SSMS,
-seleccionando previamente la base correspondiente. En Azure SQL
-no se admite USE ni CREATE DATABASE dentro del script.
+seleccionando previamente la base correspondiente en el
+desplegable de la barra de herramientas.
+
+En Azure SQL no se admite CREATE DATABASE ni USE dentro de un
+script: cada conexion esta atada a una sola base.
 
 
+5.5 Usuarios dedicados por base de datos
 --------------------------------------------------------------
+En lugar de que los microservicios se conecten con el
+administrador del servidor, cada uno tiene su propio usuario con
+permisos de lectura y escritura unicamente sobre su base.
+Es el principio de minimo privilegio.
+
+Ejecutado en SSMS, conectado a Azure y con PacientesDB
+seleccionada:
+
+  CREATE USER usuario_pacientes WITH PASSWORD = '<CONTRASENA_USUARIO_PACIENTES>';
+  GO
+  ALTER ROLE db_datareader ADD MEMBER usuario_pacientes;
+  GO
+  ALTER ROLE db_datawriter ADD MEMBER usuario_pacientes;
+  GO
+
+Con HistorialDB seleccionada:
+
+  CREATE USER usuario_historialclinico WITH PASSWORD = '<CONTRASENA_USUARIO_HISTORIAL>';
+  GO
+  ALTER ROLE db_datareader ADD MEMBER usuario_historialclinico;
+  GO
+  ALTER ROLE db_datawriter ADD MEMBER usuario_historialclinico;
+  GO
+
+Nota: son usuarios contenidos, propios de Azure SQL. Viven solo
+dentro de su base y no existen a nivel de servidor, por lo que
+no aparecen en Security > Logins.
+
+Para la ejecucion local en Docker Compose se crearon los mismos
+usuarios en SQL Server, pero con el metodo clasico (login de
+servidor + usuario de base), porque SQL Server local no habilita
+usuarios contenidos por defecto:
+
+  CREATE LOGIN usuario_pacientes WITH PASSWORD = '<CONTRASENA>', CHECK_POLICY = OFF;
+  GO
+  CREATE USER usuario_pacientes FOR LOGIN usuario_pacientes;
+  GO
+  ALTER ROLE db_datareader ADD MEMBER usuario_pacientes;
+  GO
+  ALTER ROLE db_datawriter ADD MEMBER usuario_pacientes;
+  GO
+  
+  ==============================================================
 6. IMAGENES DOCKER
---------------------------------------------------------------
+==============================================================
 
 az acr login --name acrpacientesmatias
 
-Etiquetado de las imagenes construidas con Docker Compose:
+6.1 Construccion
+--------------------------------------------------------------
+
+docker compose build
+
+6.2 Etiquetado (version v1)
+--------------------------------------------------------------
 
 docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-oauthjwt acrpacientesmatias.azurecr.io/oauthjwt:v1
 docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-pacientes acrpacientesmatias.azurecr.io/pacientes:v1
 docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-historial acrpacientesmatias.azurecr.io/historial:v1
 docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-apigateway acrpacientesmatias.azurecr.io/apigateway:v1
 
-Subida al registro:
+6.3 Subida al registro
+--------------------------------------------------------------
 
 docker push acrpacientesmatias.azurecr.io/oauthjwt:v1
 docker push acrpacientesmatias.azurecr.io/pacientes:v1
 docker push acrpacientesmatias.azurecr.io/historial:v1
 docker push acrpacientesmatias.azurecr.io/apigateway:v1
 
-Verificacion:
-
 az acr repository list --name acrpacientesmatias --output table
 
 
---------------------------------------------------------------
+==============================================================
 7. ENTORNO DE CONTAINER APPS
---------------------------------------------------------------
+==============================================================
 
 az extension add --name containerapp --upgrade
 
 az containerapp env create --name env-pacientes --resource-group rg-pacientes-aa --location centralus
 
-Dominio generado: mangorock-874cd57f.centralus.azurecontainerapps.io
-
-Obtencion de la clave del registro (necesaria para los despliegues):
+Obtencion de la clave del registro, necesaria para que los
+Container Apps puedan descargar las imagenes privadas:
 
 az acr credential show --name acrpacientesmatias --query "passwords[0].value" -o tsv
 
 
---------------------------------------------------------------
+==============================================================
 8. DESPLIEGUE DE LOS CINCO SERVICIOS
---------------------------------------------------------------
+==============================================================
 
 8.1 RabbitMQ
-Ingress interno: solo accesible desde dentro del entorno.
+--------------------------------------------------------------
+Ingress interno: accesible solo desde dentro del entorno, para
+que la cola no quede expuesta a internet.
 Transporte TCP porque AMQP no es HTTP.
 
 az containerapp create --name rabbitmq --resource-group rg-pacientes-aa --environment env-pacientes --image rabbitmq:4-management --target-port 5672 --ingress internal --transport tcp --env-vars RABBITMQ_DEFAULT_USER=<USUARIO_RABBITMQ> RABBITMQ_DEFAULT_PASS=<CONTRASENA_RABBITMQ> --cpu 1.0 --memory 2.0Gi
 
 
 8.2 OAuthJWT
+--------------------------------------------------------------
 
-az containerapp create --name oauthjwt --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/oauthjwt:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 Jwt__Key=<CLAVE_JWT_SECRETA> Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes Jwt__ExpireMinutes=60 --cpu 0.5 --memory 1.0Gi
+az containerapp create --name oauthjwt --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/oauthjwt:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 Jwt__Key=<CLAVE_JWT> Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes Jwt__ExpireMinutes=60 --cpu 0.5 --memory 1.0Gi
 
 
 8.3 Pacientes.Api
+--------------------------------------------------------------
 
-az containerapp create --name pacientes --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/pacientes:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 "ConnectionStrings__PacientesConnection=Server=tcp:sql-pacientes-matias-26.database.windows.net,1433;Database=PacientesDB;User ID=adminsql;Password=<CONTRASENA_SQL>;Encrypt=True;TrustServerCertificate=False;" RabbitMQ__HostName=rabbitmq RabbitMQ__Port=5672 RabbitMQ__UserName=<USUARIO_RABBITMQ> RabbitMQ__Password=<CONTRASENA_RABBITMQ> RabbitMQ__QueueCreado=paciente_creado RabbitMQ__QueueDesactivado=paciente_desactivado Jwt__Key=<CLAVE_JWT_SECRETA> Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes --cpu 0.5 --memory 1.0Gi
+az containerapp create --name pacientes --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/pacientes:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 RabbitMQ__HostName=rabbitmq RabbitMQ__Port=5672 RabbitMQ__UserName=<USUARIO_RABBITMQ> RabbitMQ__QueueCreado=paciente_creado RabbitMQ__QueueDesactivado=paciente_desactivado Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes --cpu 0.5 --memory 1.0Gi
 
 
 8.4 HistorialClinico.Api
+--------------------------------------------------------------
 
-az containerapp create --name historial --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/historial:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 "ConnectionStrings__HistorialConnection=Server=tcp:sql-pacientes-matias-26.database.windows.net,1433;Database=HistorialDB;User ID=adminsql;Password=<CONTRASENA_SQL>;Encrypt=True;TrustServerCertificate=False;" RabbitMQ__HostName=rabbitmq RabbitMQ__Port=5672 RabbitMQ__UserName=<USUARIO_RABBITMQ> RabbitMQ__Password=<CONTRASENA_RABBITMQ> RabbitMQ__QueueCreado=paciente_creado RabbitMQ__QueueDesactivado=paciente_desactivado Jwt__Key=<CLAVE_JWT_SECRETA> Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes --cpu 0.5 --memory 1.0Gi
+az containerapp create --name historial --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/historial:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 RabbitMQ__HostName=rabbitmq RabbitMQ__Port=5672 RabbitMQ__UserName=<USUARIO_RABBITMQ> RabbitMQ__QueueCreado=paciente_creado RabbitMQ__QueueDesactivado=paciente_desactivado Jwt__Issuer=OAuthJWT Jwt__Audience=MicroserviciosPacientes --cpu 0.5 --memory 1.0Gi
 
 
 8.5 ApiGateway
+--------------------------------------------------------------
 A diferencia de Docker Compose, aqui los destinos son las URLs
-publicas completas de cada servicio, no nombres de red interna.
+publicas completas de cada servicio y no nombres de red interna,
+porque cada Container App tiene su propio dominio.
 
 az containerapp create --name apigateway --resource-group rg-pacientes-aa --environment env-pacientes --image acrpacientesmatias.azurecr.io/apigateway:v1 --registry-server acrpacientesmatias.azurecr.io --registry-username acrpacientesmatias --registry-password <CONTRASENA_ACR> --target-port 8080 --ingress external --env-vars ASPNETCORE_ENVIRONMENT=Development ASPNETCORE_URLS=http://+:8080 ReverseProxy__Clusters__authCluster__Destinations__authDestination__Address=https://oauthjwt.mangorock-874cd57f.centralus.azurecontainerapps.io/ ReverseProxy__Clusters__pacientesCluster__Destinations__pacientesDestination__Address=https://pacientes.mangorock-874cd57f.centralus.azurecontainerapps.io/ ReverseProxy__Clusters__historialCluster__Destinations__historialDestination__Address=https://historial.mangorock-874cd57f.centralus.azurecontainerapps.io/ --cpu 0.5 --memory 1.0Gi
 
 
---------------------------------------------------------------
-9. VERIFICACION Y PRUEBAS
+==============================================================
+9. SECRETOS EN CONTAINER APPS
+==============================================================
+Las cadenas de conexion, la clave JWT y la contrasena de RabbitMQ
+se guardan en el almacen de secretos del Container App en lugar
+de quedar como variables de entorno en texto plano. La variable
+apunta al secreto con la sintaxis secretref:
+
+9.1 Cadenas de conexion a SQL
 --------------------------------------------------------------
 
-Listado de los servicios desplegados:
+az containerapp secret set --name pacientes --resource-group rg-pacientes-aa --secrets pacientes-sql="Server=tcp:sql-pacientes-matias-26.database.windows.net,1433;Database=PacientesDB;User ID=usuario_pacientes;Password=<CONTRASENA_USUARIO_PACIENTES>;Encrypt=True;TrustServerCertificate=False;"
+
+az containerapp update --name pacientes --resource-group rg-pacientes-aa --set-env-vars ConnectionStrings__PacientesConnection=secretref:pacientes-sql
+
+az containerapp secret set --name historial --resource-group rg-pacientes-aa --secrets historial-sql="Server=tcp:sql-pacientes-matias-26.database.windows.net,1433;Database=HistorialDB;User ID=usuario_historialclinico;Password=<CONTRASENA_USUARIO_HISTORIAL>;Encrypt=True;TrustServerCertificate=False;"
+
+az containerapp update --name historial --resource-group rg-pacientes-aa --set-env-vars ConnectionStrings__HistorialConnection=secretref:historial-sql
+
+
+9.2 Contrasena de RabbitMQ
+--------------------------------------------------------------
+
+az containerapp secret set --name pacientes --resource-group rg-pacientes-aa --secrets rabbitmq-password=<CONTRASENA_RABBITMQ>
+az containerapp update --name pacientes --resource-group rg-pacientes-aa --set-env-vars RabbitMQ__Password=secretref:rabbitmq-password
+
+az containerapp secret set --name historial --resource-group rg-pacientes-aa --secrets rabbitmq-password=<CONTRASENA_RABBITMQ>
+az containerapp update --name historial --resource-group rg-pacientes-aa --set-env-vars RabbitMQ__Password=secretref:rabbitmq-password
+
+
+9.3 Clave JWT
+--------------------------------------------------------------
+El mismo valor en los tres servicios: si difiere en alguno, el
+token emitido por OAuthJWT es rechazado por los microservicios.
+
+az containerapp secret set --name oauthjwt --resource-group rg-pacientes-aa --secrets jwt-key=<CLAVE_JWT>
+az containerapp update --name oauthjwt --resource-group rg-pacientes-aa --set-env-vars Jwt__Key=secretref:jwt-key
+
+az containerapp secret set --name pacientes --resource-group rg-pacientes-aa --secrets jwt-key=<CLAVE_JWT>
+az containerapp update --name pacientes --resource-group rg-pacientes-aa --set-env-vars Jwt__Key=secretref:jwt-key
+
+az containerapp secret set --name historial --resource-group rg-pacientes-aa --secrets jwt-key=<CLAVE_JWT>
+az containerapp update --name historial --resource-group rg-pacientes-aa --set-env-vars Jwt__Key=secretref:jwt-key
+
+
+==============================================================
+10. REPLICA FIJA PARA LA DEMOSTRACION
+==============================================================
+Por defecto los Container Apps escalan a cero cuando no reciben
+peticiones, lo que hace que la primera peticion despues de un
+rato tarde mucho. Se fija una replica activa en los cinco.
+
+az containerapp update --name oauthjwt --resource-group rg-pacientes-aa --min-replicas 1 --max-replicas 1
+az containerapp update --name pacientes --resource-group rg-pacientes-aa --min-replicas 1 --max-replicas 1
+az containerapp update --name historial --resource-group rg-pacientes-aa --min-replicas 1 --max-replicas 1
+az containerapp update --name rabbitmq --resource-group rg-pacientes-aa --min-replicas 1 --max-replicas 1
+az containerapp update --name apigateway --resource-group rg-pacientes-aa --min-replicas 1 --max-replicas 1
+
+
+==============================================================
+11. ACTUALIZACION A LA VERSION v2
+==============================================================
+Se agrego el boton "Authorize" de Swagger a los dos
+microservicios para poder enviar el token JWT desde la propia
+interfaz. Al ser un cambio de codigo hubo que reconstruir las
+imagenes y publicar una version nueva.
+
+docker compose build pacientes historial
+
+docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-pacientes acrpacientesmatias.azurecr.io/pacientes:v2
+docker tag dist-4bm-aa-oauthjwt-azure-bonilla-matias-historial acrpacientesmatias.azurecr.io/historial:v2
+
+az acr login --name acrpacientesmatias
+
+docker push acrpacientesmatias.azurecr.io/pacientes:v2
+docker push acrpacientesmatias.azurecr.io/historial:v2
+
+az containerapp update --name pacientes --resource-group rg-pacientes-aa --image acrpacientesmatias.azurecr.io/pacientes:v2
+az containerapp update --name historial --resource-group rg-pacientes-aa --image acrpacientesmatias.azurecr.io/historial:v2
+
+
+==============================================================
+12. VERIFICACION Y PRUEBAS
+==============================================================
 
 az containerapp list --resource-group rg-pacientes-aa --output table
 
-Consulta de logs de un servicio:
-
 az containerapp logs show --name pacientes --resource-group rg-pacientes-aa --tail 50
 
-Pruebas realizadas desde Postman a traves del API Gateway:
+Pruebas realizadas desde Postman contra el API Gateway:
+
   1. GET /api/Pacientes sin token          -> 401 Unauthorized
   2. POST /api/Auth/login (admin/1234)     -> devuelve el token
   3. GET /api/Pacientes con token          -> 200 OK
-  4. POST /api/Pacientes con token         -> 201 Created
-  5. GET /api/HistorialClinico con token   -> el historial del
-     paciente aparece creado automaticamente por RabbitMQ
+  4. GET /api/HistorialClinico con token   -> 200 OK
+  5. POST /api/Pacientes con token         -> 201 Created
+  6. GET /api/HistorialClinico             -> el historial del paciente
+     recien creado aparece automaticamente, generado por el
+     consumidor de RabbitMQ
+  7. Token con rol "medico" en un POST     -> 403 Forbidden
 
 
---------------------------------------------------------------
-10. ELIMINACION DE LOS RECURSOS
---------------------------------------------------------------
+==============================================================
+13. ELIMINACION DE LOS RECURSOS
+==============================================================
 Al finalizar el periodo de revision se elimina el Resource Group
 completo, lo que borra todos los recursos asociados y evita
 consumo posterior de creditos.
 
 az group delete --name rg-pacientes-aa --yes --no-wait
-
-Verificacion de que ya no existe:
 
 az group list --output table
 ==============================================================

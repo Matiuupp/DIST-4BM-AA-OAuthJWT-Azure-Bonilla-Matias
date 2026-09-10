@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using Pacientes.Api.Data;
 using Pacientes.Api.Services;
 using System.Text;
@@ -45,7 +46,34 @@ namespace Pacientes.Api
                 });
 
             builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen();
+
+            // Configura el boton "Authorize" de Swagger.
+            // Sin esto, la interfaz no tiene donde pegar el token y habria
+            // que probar los endpoints protegidos obligatoriamente con Postman
+            // Configura el boton "Authorize" de Swagger.
+            // Sin esto, la interfaz no tiene donde pegar el token y habria
+            // que probar los endpoints protegidos obligatoriamente con Postman
+            builder.Services.AddSwaggerGen(options =>
+            {
+                // Define el esquema: el token viaja en la cabecera Authorization
+                options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                {
+                    Name = "Authorization",
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "Bearer",
+                    BearerFormat = "JWT",
+                    In = ParameterLocation.Header,
+                    Description = "Pegue aqui el token obtenido en el servicio OAuthJWT (solo el token, sin escribir la palabra Bearer)"
+                });
+
+                // En Microsoft.OpenApi 2.0 este metodo recibe un delegado que
+                // entrega el documento, y las referencias se crean con
+                // OpenApiSecuritySchemeReference en vez de OpenApiReference
+                options.AddSecurityRequirement(document => new()
+                {
+                    [new OpenApiSecuritySchemeReference("Bearer", document)] = []
+                });
+            });
 
             var app = builder.Build();
 

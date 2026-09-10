@@ -2,49 +2,46 @@
 
 Sistema de microservicios para la gestión de pacientes e historiales clínicos, desarrollado con .NET 10, Entity Framework Core, SQL Server, RabbitMQ, Docker y un API Gateway con YARP, protegido mediante autenticación JWT y desplegado en Microsoft Azure.
 
-**Materia:** Aplicaciones Distribuidas
-**Curso:** Cuarto "B" Matutino - Desarrollo de Software
-**Estudiante:** Matías Bonilla
+**Materia:** Aplicaciones Distribuidas  
+**Curso:** Cuarto "B" Matutino - Desarrollo de Software  
+**Estudiante:** Matías Bonilla  
 **Tema asignado:** Pacientes e Historial Clínico
 
 ---
 
 ## Servicios desplegados en Azure
 
-Todos los servicios están publicados y accesibles desde internet.
+> **Antes de hacer clic:** la raíz de cada servicio devuelve un error 404. Es el comportamiento esperado — los endpoints viven bajo `/api/...` y la documentación bajo `/swagger`. Use los enlaces de la tabla, que apuntan directamente a Swagger.
 
-| Servicio | URL |
+| Servicio | Enlace |
 |---|---|
-| **API Gateway (entrada principal)** | https://apigateway.mangorock-874cd57f.centralus.azurecontainerapps.io |
-| OAuthJWT (Swagger) | https://oauthjwt.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
-| Pacientes.Api (Swagger) | https://pacientes.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
-| HistorialClinico.Api (Swagger) | https://historial.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
+| **API Gateway** (entrada principal) | https://apigateway.mangorock-874cd57f.centralus.azurecontainerapps.io |
+| OAuthJWT — obtener el token | https://oauthjwt.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
+| Pacientes.Api | https://pacientes.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
+| HistorialClinico.Api | https://historial.mangorock-874cd57f.centralus.azurecontainerapps.io/swagger |
 
-RabbitMQ está desplegado con acceso interno únicamente, por seguridad: solo los microservicios dentro del entorno pueden alcanzarlo.
-
-> **Nota:** al entrar a la raíz de cualquier servicio aparece un error 404. Es el comportamiento esperado, porque los endpoints viven bajo `/api/...` y la documentación bajo `/swagger`.
+RabbitMQ está desplegado con **ingress interno**: solo los microservicios dentro del entorno pueden alcanzarlo. No tiene URL pública, por seguridad.
 
 ---
 
-## Cómo probar el sistema en 3 pasos
+## Cómo probar el sistema
 
-### 1. Comprobar que la protección funciona
+Los dos microservicios tienen el botón **Authorize** en Swagger, así que puede probarse todo desde el navegador sin necesidad de Postman.
 
-GET https://apigateway.mangorock-874cd57f.centralus.azurecontainerapps.io/api/Pacientes
+### Paso 1 — Comprobar que la protección funciona
 
+En el Swagger de Pacientes, ejecute `GET /api/Pacientes` sin autorizarse. La respuesta es **401 Unauthorized**.
 
-Sin enviar ningún token, la respuesta es **401 Unauthorized**.
+### Paso 2 — Obtener un token
 
-### 2. Obtener un token JWT
+En el Swagger de OAuthJWT, ejecute `POST /api/Auth/login` con:
 
-POST https://apigateway.mangorock-874cd57f.centralus.azurecontainerapps.io/api/Auth/login
-Content-Type: application/json
-
+```json
 {
-"usuario": "admin",
-"password": "1234"
+  "usuario": "admin",
+  "password": "1234"
 }
-
+```
 
 La respuesta contiene el token, el usuario y su rol:
 
@@ -56,15 +53,13 @@ La respuesta contiene el token, el usuario y su rol:
 }
 ```
 
-### 3. Repetir la petición con el token
+### Paso 3 — Autorizarse y repetir
 
-GET https://apigateway.mangorock-874cd57f.centralus.azurecontainerapps.io/api/Pacientes
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Copie el valor de `token` (solo el token, sin comillas). Vuelva al Swagger de Pacientes, pulse **Authorize** arriba a la derecha, pegue el token y confirme.
 
+Ahora `GET /api/Pacientes` responde **200 OK** con la lista.
 
-Ahora responde **200 OK** con la lista de pacientes.
-
-El formato del header es la palabra `Bearer`, un espacio, y el token. Sin ese prefijo la petición falla aunque el token sea válido.
+El mismo token sirve para HistorialClinico.Api, porque los tres servicios comparten la misma clave de firma.
 
 ### Usuarios disponibles
 
@@ -73,76 +68,98 @@ El formato del header es la palabra `Bearer`, un espacio, y el token. Sin ese pr
 | admin | 1234 | Administrador | Consultar, crear, editar y eliminar |
 | medico | 1234 | Usuario | Solo consultar |
 
-Si se inicia sesión como `medico` y se intenta crear un paciente, la respuesta es **403 Forbidden**: el token es válido, pero el rol no tiene permiso. Es la diferencia entre autenticación (quién eres) y autorización (qué puedes hacer).
+Con el usuario `medico`, un `POST` responde **403 Forbidden**: el token es válido pero el rol no alcanza. Es la diferencia entre autenticación (quién eres) y autorización (qué puedes hacer).
+
+### Probar la mensajería asíncrona
+
+1. Con un token de `admin`, cree un paciente con `POST /api/Pacientes`
+2. Consulte `GET /api/HistorialClinico`
+
+Aparecerá un historial nuevo con el número `HC-XXXX` correspondiente al id del paciente, creado automáticamente por el consumidor de RabbitMQ.
 
 ---
 
 ## Arquitectura
+          Cliente / Postman
+                 |
+                 v
+          +--------------+
+          | API Gateway  |
+          +--------------+
+                 |
+   +-------------+-------------+
+   |             |             |
+   v             v             v
 
-El sistema está formado por cinco componentes independientes:
-
-Cliente / Postman
-|
-v
-API Gateway ──────────────┐
-| |
-┌────┴────┬──────────┐ |
-v v v v
-OAuthJWT Pacientes Historial
++--------+ +-----------+ +-----------+
+|OAuthJWT| | Pacientes | | Historial |
++--------+ +-----------+ +-----------+
 | ^
-└─RabbitMQ─┘
++-- RabbitMQ ---+
+| |
+v v
++------------------------+
+| Azure SQL Database |
+| PacientesDB HistorialDB|
++------------------------+
 
-    Azure SQL Database
-  (PacientesDB · HistorialDB)
 
 | Componente | Responsabilidad |
 |---|---|
-| **API Gateway** | Punto único de entrada. Enruta las peticiones al servicio correspondiente usando YARP. No valida tokens: solo reenvía. |
-| **OAuthJWT** | Servicio independiente de autenticación. Recibe usuario y contraseña, y emite el token JWT firmado. No tiene base de datos. |
-| **Pacientes.Api** | CRUD de pacientes. Valida el token y publica eventos en RabbitMQ. |
-| **HistorialClinico.Api** | CRUD de historiales clínicos. Valida el token y consume los eventos de RabbitMQ. |
-| **RabbitMQ** | Transporta los mensajes entre los dos microservicios de forma asíncrona. |
+| **API Gateway** | Punto único de entrada. Enruta las peticiones con YARP. No valida tokens: los reenvía intactos |
+| **OAuthJWT** | Servicio independiente de autenticación. Emite el token JWT firmado. No tiene base de datos |
+| **Pacientes.Api** | CRUD de pacientes. Valida el token y publica eventos en RabbitMQ |
+| **HistorialClinico.Api** | CRUD de historiales. Valida el token y consume los eventos |
+| **RabbitMQ** | Transporta los mensajes entre los dos microservicios |
 
 ### El servicio OAuthJWT
 
-En las prácticas de clase, el microservicio de negocio era también el emisor del token. En esta actividad esa responsabilidad se separó en un servicio propio.
+En las prácticas de clase el microservicio de negocio era también el emisor del token. Aquí esa responsabilidad se separó en un servicio propio, de modo que la autenticación deja de estar acoplada a un microservicio concreto.
 
-La ventaja es que la autenticación deja de estar acoplada a un microservicio concreto: si mañana se agrega un tercero, todos piden el token al mismo sitio en vez de que cada uno tenga su propio login.
-
-**Los tres servicios comparten exactamente la misma `Key`, `Issuer` y `Audience`.** Esto es indispensable: OAuthJWT firma el token con esa clave y los microservicios verifican la firma con la misma. Si alguno de los tres valores difiere aunque sea en una letra, el token se rechaza aunque sea legítimo.
-
-Los parámetros configurados son:
+**Los tres servicios comparten la misma `Key`, `Issuer` y `Audience`.** OAuthJWT firma con esa clave y los microservicios verifican la firma con la misma. Si alguno de los tres valores difiere aunque sea en una letra, el token se rechaza aunque sea legítimo.
 
 | Parámetro | Valor | Para qué sirve |
 |---|---|---|
-| Key | (secreta) | Clave con la que se firma. Impide falsificar tokens. |
-| Issuer | OAuthJWT | Quién emitió el token. |
-| Audience | MicroserviciosPacientes | Para quién está destinado. |
-| ExpireMinutes | 60 | Cuánto tiempo es válido. |
+| Key | (secreta) | Clave de firma. Impide falsificar tokens |
+| Issuer | OAuthJWT | Quién emitió el token |
+| Audience | MicroserviciosPacientes | Para quién está destinado |
+| ExpireMinutes | 60 | Cuánto tiempo es válido |
 
-Un JWT no es secreto, es **firmado**. Cualquiera puede leer su contenido, pero nadie puede modificarlo sin conocer la clave. Por eso los claims llevan el usuario y el rol, nunca la contraseña.
+Un JWT no es secreto, es **firmado**: cualquiera puede leer su contenido, pero nadie puede modificarlo sin la clave. Por eso los claims llevan el usuario y el rol, nunca la contraseña.
 
 ---
 
 ## Base de datos
 
-### Por qué son dos bases separadas
+### Dos bases separadas
 
-Cada microservicio tiene su propia base de datos: `PacientesDB` e `HistorialDB`. Es un principio de la arquitectura de microservicios — si compartieran base, la separación sería solo aparente.
+Cada microservicio tiene la suya: `PacientesDB` e `HistorialDB`. Si compartieran base, la separación sería solo aparente.
 
 ### La relación 1:N sin llave foránea
 
-Un paciente puede tener varios historiales clínicos. Pero como las tablas viven en bases distintas, **SQL Server no permite crear una llave foránea entre ellas**.
+Un paciente puede tener varios historiales. Pero como las tablas viven en bases distintas, **SQL Server no permite una llave foránea entre ellas**.
 
-La solución es que el campo `hist_paciente_id` guarda el id del paciente como un número normal, sin restricción. La relación existe en la lógica de la aplicación, no en el motor de base de datos.
+El campo `hist_paciente_id` guarda el id del paciente como un número normal, sin restricción. La relación existe en la lógica de la aplicación, no en el motor.
 
-**La ventaja:** cada servicio puede caerse, actualizarse o cambiar de base sin arrastrar al otro.
+**La ventaja:** cada servicio puede caerse o actualizarse sin arrastrar al otro.  
+**El precio:** la base ya no valida que el paciente exista. Esa comprobación la hace el código.
 
-**El precio:** la base ya no protege la integridad. Acepta sin problema un historial con un id de paciente que no existe. Esa validación tiene que hacerla el código.
+### Usuarios dedicados por base
+
+Los microservicios **no se conectan con el administrador del servidor**. Cada uno tiene su propio usuario con permisos de lectura y escritura únicamente sobre su base:
+
+| Base | Usuario | Roles |
+|---|---|---|
+| PacientesDB | `usuario_pacientes` | db_datareader, db_datawriter |
+| HistorialDB | `usuario_historialclinico` | db_datareader, db_datawriter |
+
+Es el principio de mínimo privilegio: si un servicio se viera comprometido, el acceso quedaría limitado a sus propios datos. Ninguno puede crear o alterar tablas, ni acceder a la base del otro.
+
+En Azure son **usuarios contenidos**, que existen solo dentro de su base y no a nivel de servidor. En local se usa el método clásico (login de servidor más usuario de base), porque SQL Server local no habilita usuarios contenidos por defecto.
 
 ### Estructura de las tablas
 
-**tbl_paciente** (base `PacientesDB`)
+**tbl_paciente** (`PacientesDB`)
 
 | Columna | Tipo | Notas |
 |---|---|---|
@@ -151,38 +168,34 @@ La solución es que el campo `hist_paciente_id` guarda el id del paciente como u
 | pac_nombre | varchar(100) | Obligatorio |
 | pac_apellido | varchar(100) | Obligatorio |
 | pac_direccion | varchar(200) | Opcional |
-| pac_estado | bit | Para el borrado lógico. Por defecto 1 |
+| pac_estado | bit | Borrado lógico. Por defecto 1 |
 
-**tbl_historialclinico** (base `HistorialDB`)
+**tbl_historialclinico** (`HistorialDB`)
 
 | Columna | Tipo | Notas |
 |---|---|---|
 | hist_id | int IDENTITY | Clave primaria |
 | hist_paciente_id | int | Id del paciente. **Sin FOREIGN KEY** |
-| hist_numero | varchar(20) | UNIQUE. Número de historia clínica visible |
+| hist_numero | varchar(20) | UNIQUE. Número de historia clínica |
 | hist_diagnostico | varchar(500) | Obligatorio |
 | hist_tratamiento | varchar(500) | Opcional |
 | hist_fecha | datetime | Por defecto la fecha actual |
-| hist_estado | bit | Para el borrado lógico. Por defecto 1 |
+| hist_estado | bit | Borrado lógico. Por defecto 1 |
 
 ### Scripts incluidos
 
-La carpeta `BaseDatos/` contiene cuatro archivos, dos por escenario:
-
 | Archivo | Uso |
 |---|---|
-| `PacientesDB.sql` | Ejecución local, en SQL Server instalado |
-| `HistorialClinicoDB.sql` | Ejecución local |
-| `Azure_PacientesDB.sql` | Ejecución en Azure SQL |
-| `Azure_HistorialClinicoDB.sql` | Ejecución en Azure SQL |
+| `BaseDatos/PacientesDB.sql` | Ejecución local |
+| `BaseDatos/HistorialClinicoDB.sql` | Ejecución local |
+| `BaseDatos/Azure_PacientesDB.sql` | Ejecución en Azure SQL |
+| `BaseDatos/Azure_HistorialClinicoDB.sql` | Ejecución en Azure SQL |
 
-**Por qué hay dos versiones.** Azure SQL tiene tres diferencias respecto a SQL Server local:
+**Por qué dos versiones.** Azure SQL tiene tres diferencias respecto a SQL Server local:
 
-1. **No admite `CREATE DATABASE` dentro de un script.** Las bases se crean desde el portal o con Azure CLI.
-2. **No admite `USE base`.** Cada conexión está atada a una sola base. Hay que seleccionarla antes de ejecutar, no dentro del script.
-3. **No se crea un login adicional.** Se usa `adminsql`, el administrador del servidor lógico, que ya tiene acceso a ambas bases.
-
-Los scripts locales crean además el login `usuario_librosB`, reutilizado de un proyecto anterior para aprovechar la configuración existente.
+1. No admite `CREATE DATABASE` dentro de un script — las bases se crean desde el portal o con Azure CLI
+2. No admite `USE base` — cada conexión está atada a una sola base, hay que seleccionarla antes de ejecutar
+3. Los usuarios se crean como usuarios contenidos, sin login de servidor
 
 ---
 
@@ -190,34 +203,32 @@ Los scripts locales crean además el login `usuario_librosB`, reutilizado de un 
 
 | Cola | Publica | Consume | Efecto |
 |---|---|---|---|
-| `paciente_creado` | Pacientes.Api | HistorialClinico.Api | Crea un historial inicial con número `HC-XXXX` |
-| `paciente_desactivado` | Pacientes.Api | HistorialClinico.Api | Desactiva todos los historiales de ese paciente |
+| `paciente_creado` | Pacientes.Api | HistorialClinico.Api | Crea un historial inicial `HC-XXXX` |
+| `paciente_desactivado` | Pacientes.Api | HistorialClinico.Api | Desactiva todos los historiales del paciente |
 
-### Por qué mensajería y no una llamada HTTP directa
+### Por qué mensajería y no HTTP directo
 
-Si `HistorialClinico.Api` estuviera caído, una llamada HTTP fallaría en el acto y el paciente quedaría sin su historial. Con RabbitMQ el mensaje **espera en la cola** hasta que el servicio vuelva a levantarse, y entonces se procesa.
+Si `HistorialClinico.Api` estuviera caído, una llamada HTTP fallaría en el acto y el paciente quedaría sin historial. Con RabbitMQ el mensaje **espera en la cola** hasta que el servicio vuelva a levantarse.
 
-Esto se verificó apagando el consumidor, creando un paciente, y comprobando que el mensaje quedaba en la cola hasta que el servicio volvía.
+Se verificó apagando el consumidor, creando un paciente y comprobando que el mensaje quedaba pendiente hasta que el servicio volvía.
 
-### Confirmación manual de los mensajes
+### Confirmación manual de mensajes
 
-Los consumidores usan `autoAck: false`. Esto significa que el mensaje **no se borra de la cola al entregarse**, sino cuando el código confirma explícitamente con `BasicAck`, después de haber guardado en la base.
+Los consumidores usan `autoAck: false`. El mensaje no se borra al entregarse, sino cuando el código confirma con `BasicAck`, después de guardar en la base. Si algo falla, `BasicNack` con `requeue: true` lo devuelve a la cola.
 
-Si algo falla, `BasicNack` con `requeue: true` devuelve el mensaje a la cola para reintentarlo.
-
-Con `autoAck: true` el mensaje se borraría al entregarlo, sin esperar el resultado: si el guardado fallaba después, el mensaje se perdía para siempre. Es la diferencia entre firmar el recibo de un paquete al recibirlo o después de abrirlo y comprobar que llegó bien.
+Con `autoAck: true` el mensaje se borraría al entregarlo: si el guardado fallaba después, se perdía. Es la diferencia entre firmar el recibo de un paquete al recibirlo o después de comprobar que llegó bien.
 
 ### La cascada manual
 
-Cuando se desactiva un paciente con varios historiales, el consumidor los recorre uno por uno y los desactiva. Si existiera una llave foránea con borrado en cascada, la base lo haría sola. Como no la hay, ese `foreach` es la implementación manual de esa cascada.
+Al desactivar un paciente con varios historiales, el consumidor los recorre y los desactiva uno por uno. Si existiera una llave foránea con borrado en cascada, la base lo haría sola. Como no la hay, ese `foreach` es la implementación manual de esa cascada.
 
 ---
 
 ## El borrado lógico
 
-El `DELETE` no elimina ningún registro. Cambia el campo de estado a `false`, y los listados filtran para mostrar solo los activos.
+El `DELETE` no elimina registros. Cambia el estado a `false` y los listados filtran por activos.
 
-Se decidió así porque en un sistema de salud la información clínica no puede perderse, y porque si se borrara el paciente sus historiales quedarían huérfanos.
+Se decidió así porque en un sistema de salud la información clínica no puede perderse, y porque al borrar un paciente sus historiales quedarían huérfanos.
 
 ---
 
@@ -229,7 +240,7 @@ Se decidió así porque en un sistema de salud la información clínica no puede
 - SQL Server con autenticación mixta y TCP/IP habilitado en el puerto 1433
 - SQL Server Management Studio
 
-### Paso 1 — Clonar el repositorio
+### Paso 1 — Clonar
 
 git clone https://github.com/Matiuupp/DIST-4BM-AA-OAuthJWT-Azure-Bonilla-Matias.git
 cd DIST-4BM-AA-OAuthJWT-Azure-Bonilla-Matias
@@ -237,27 +248,44 @@ cd DIST-4BM-AA-OAuthJWT-Azure-Bonilla-Matias
 
 ### Paso 2 — Crear las bases de datos
 
-Abrir SQL Server Management Studio con **autenticación de Windows** (hace falta permiso para crear logins) y ejecutar **en este orden**:
+Abrir SSMS con **autenticación de Windows** y ejecutar **en este orden**:
 
 1. `BaseDatos/PacientesDB.sql`
 2. `BaseDatos/HistorialClinicoDB.sql`
 
-El orden importa: el login se crea en el primer script y el segundo solo lo referencia.
+El orden importa: el login se crea en el primer script y el segundo lo referencia.
 
-### Paso 3 — Revisar la configuración
+### Paso 3 — Crear los usuarios de cada base
 
-En `docker-compose.yml`, verificar que el usuario y la contraseña de SQL Server coincidan con los del script, en los servicios `pacientes` e `historial`.
+Con `PacientesDB` seleccionada:
 
-### Paso 4 — Levantar el sistema
+```sql
+CREATE LOGIN usuario_pacientes WITH PASSWORD = '<CONTRASENA>', CHECK_POLICY = OFF;
+GO
+CREATE USER usuario_pacientes FOR LOGIN usuario_pacientes;
+GO
+ALTER ROLE db_datareader ADD MEMBER usuario_pacientes;
+GO
+ALTER ROLE db_datawriter ADD MEMBER usuario_pacientes;
+GO
+```
+
+Y lo equivalente en `HistorialDB` para `usuario_historialclinico`.
+
+### Paso 4 — Revisar el compose
+
+En `docker-compose.yml`, verificar que las contraseñas de las cadenas de conexión coincidan con las que acaba de crear.
+
+### Paso 5 — Levantar
 
 docker compose up --build
 
 
-La primera vez tarda varios minutos: descarga las imágenes de .NET 10 y compila los cuatro proyectos. Las siguientes veces basta con `docker compose up`.
+La primera vez tarda varios minutos: descarga las imágenes de .NET 10 y compila los cuatro proyectos. Después basta con `docker compose up`.
 
 El sistema está listo cuando aparece `Now listening on: http://[::]:8080` de los cuatro servicios.
 
-### Paso 5 — Probar
+### Paso 6 — Probar
 
 | Qué | Dirección local |
 |---|---|
@@ -267,7 +295,7 @@ El sistema está listo cuando aparece `Now listening on: http://[::]:8080` de lo
 | HistorialClinico.Api | http://localhost:8088/swagger |
 | Panel de RabbitMQ | http://localhost:15672 |
 
-### Paso 6 — Detener
+### Paso 7 — Detener
 
 docker compose down
 
@@ -304,13 +332,9 @@ PUT /api/HistorialClinico/{id} edita diagnóstico [Administrador]
 DELETE /api/HistorialClinico/{id} desactiva [Administrador]
 
 
-El archivo `ApiGateway/ApiGateway.http` contiene todas estas peticiones listas para ejecutar desde Visual Studio.
-
 ---
 
 ## Despliegue en Azure
-
-Los recursos creados fueron:
 
 | Recurso | Nombre | Región |
 |---|---|---|
@@ -319,32 +343,32 @@ Los recursos creados fueron:
 | SQL Server | sql-pacientes-matias-26 | Central US |
 | Container Apps Environment | env-pacientes | Central US |
 
-El detalle completo de los comandos utilizados está en `MEMORIA_COMANDOS_AZURE.txt`.
+El detalle completo está en `MEMORIA_COMANDOS_AZURE.txt`.
 
 ### Diferencias entre local y Azure
 
-**Las direcciones entre servicios.** En Docker Compose los servicios se llaman por su nombre de red (`http://pacientes:8080`), porque comparten una red interna. En Container Apps cada servicio tiene su dominio público y el gateway los alcanza por ahí.
+**Direcciones entre servicios.** En Docker Compose los servicios se llaman por su nombre de red (`http://pacientes:8080`). En Container Apps cada uno tiene su dominio público y el gateway los alcanza por ahí.
 
-**La conexión a la base de datos.** En local se usa `Integrated Security` (el usuario de Windows). Un contenedor no tiene esa sesión, así que se usa usuario y contraseña de SQL, con `Encrypt=True`, que Azure SQL exige.
+**Conexión a la base.** En local se usa `Encrypt=False`; Azure SQL exige `Encrypt=True` y el prefijo `tcp:` en el servidor.
 
-**Los secretos.** El código no cambia entre escenarios: las variables de entorno de los Container Apps sobrescriben los valores del `appsettings.json` al arrancar.
+**Secretos.** En Azure las cadenas de conexión, la clave JWT y la contraseña de RabbitMQ se guardan en el almacén de secretos del Container App y las variables las referencian con `secretref:`. El valor queda oculto al inspeccionar la configuración.
+
+**Réplicas.** Los cinco servicios tienen `--min-replicas 1` para que no escalen a cero y la primera petición no tarde en despertar el contenedor.
 
 ---
 
 ## Seguridad de claves
 
-- Las contraseñas reales no están publicadas en este repositorio.
-- Los valores sensibles se configuran como variables de entorno en los Container Apps de Azure.
-- El archivo `CLAVES_AZURE_EJEMPLO.txt` documenta la estructura de las credenciales usando marcadores de posición.
-- El archivo `MEMORIA_COMANDOS_AZURE.txt` contiene los comandos ejecutados, con los secretos reemplazados.
+- Las contraseñas reales no están publicadas en este repositorio
+- Los valores sensibles se configuran como secretos en los Container Apps
+- `CLAVES_AZURE_EJEMPLO.txt` documenta la estructura con marcadores de posición
+- `MEMORIA_COMANDOS_AZURE.txt` contiene los comandos ejecutados, con los secretos reemplazados
 
 ---
 
 ## Eliminación de los recursos de Azure
 
-Los servicios permanecerán disponibles hasta el **domingo 13 de septiembre de 2026**. Después de esa fecha se eliminarán para evitar consumo de créditos.
-
-Para borrar todo:
+Los servicios permanecerán disponibles hasta el **domingo 13 de septiembre de 2026**. Después se eliminarán para evitar consumo de créditos.
 
 az group delete --name rg-pacientes-aa --yes --no-wait
 

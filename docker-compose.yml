@@ -58,13 +58,11 @@ services:
             ASPNETCORE_ENVIRONMENT: Development
             ASPNETCORE_URLS: "http://+:8080"
 
-            ConnectionStrings__PacientesConnection: >-
-                Server=host.docker.internal,1433;
-                Database=PacientesDB;
-                User Id=usuario_librosB;
-                Password=1234;
-                TrustServerCertificate=True;
-                Encrypt=False;
+            # Usuario dedicado con permisos de lectura y escritura solo sobre
+            # PacientesDB. La cadena va en una sola linea y entre comillas
+            # porque el bloque >- de YAML mete espacios entre lineas y rompe
+            # las contrasenias con caracteres especiales
+            ConnectionStrings__PacientesConnection: "Server=host.docker.internal,1433;Database=PacientesDB;User Id=usuario_pacientes;Password=7RK8bk3s7?@Y;TrustServerCertificate=True;Encrypt=False;"
 
             RabbitMQ__HostName: rabbitmq
             RabbitMQ__Port: 5672
@@ -98,13 +96,9 @@ services:
             ASPNETCORE_ENVIRONMENT: Development
             ASPNETCORE_URLS: "http://+:8080"
 
-            ConnectionStrings__HistorialConnection: >-
-                Server=host.docker.internal,1433;
-                Database=HistorialDB;
-                User Id=usuario_librosB;
-                Password=1234;
-                TrustServerCertificate=True;
-                Encrypt=False;
+            # Usuario dedicado con permisos de lectura y escritura solo
+            # sobre HistorialDB
+            ConnectionStrings__HistorialConnection: "Server=host.docker.internal,1433;Database=HistorialDB;User Id=usuario_historialclinico;Password=u+Kha80_9D4I;TrustServerCertificate=True;Encrypt=False;"
 
             RabbitMQ__HostName: rabbitmq
             RabbitMQ__Port: 5672
@@ -137,14 +131,13 @@ services:
             ASPNETCORE_ENVIRONMENT: Development
             ASPNETCORE_URLS: "http://+:8080"
 
-            ReverseProxy__Clusters__pacientesCluster__Destinations__pacientesDestination__Address: >-
-                http://pacientes:8080/
+            # En local los servicios se llaman por su nombre de red interna.
+            # En Azure se usan las URLs publicas de cada Container App
+            ReverseProxy__Clusters__pacientesCluster__Destinations__pacientesDestination__Address: "http://pacientes:8080/"
 
-            ReverseProxy__Clusters__historialCluster__Destinations__historialDestination__Address: >-
-                http://historial:8080/
+            ReverseProxy__Clusters__historialCluster__Destinations__historialDestination__Address: "http://historial:8080/"
 
-            ReverseProxy__Clusters__authCluster__Destinations__authDestination__Address: >-
-                http://oauthjwt:8080/
+            ReverseProxy__Clusters__authCluster__Destinations__authDestination__Address: "http://oauthjwt:8080/"
 
         depends_on:
             - pacientes

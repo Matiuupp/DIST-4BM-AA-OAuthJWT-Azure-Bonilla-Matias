@@ -1,34 +1,78 @@
 ==============================================================
 CLAVES Y CREDENCIALES - ARCHIVO DE EJEMPLO
 Proyecto: Microservicios Pacientes / Historial Clinico
+Estudiante: Matias Bonilla - 4to "B" DSW
 ==============================================================
 
-IMPORTANTE: este archivo contiene UNICAMENTE valores de ejemplo
-y marcadores de posicion. Las credenciales reales no se publican
-en el repositorio y se configuran como variables de entorno en
-los Container Apps de Azure.
+IMPORTANTE: este archivo documenta la ESTRUCTURA de las
+credenciales usando marcadores de posicion. Los valores reales
+no se publican en el repositorio: se configuran como secretos
+en los Container Apps de Azure.
 
 --------------------------------------------------------------
-1. AZURE SQL DATABASE
+1. AZURE SQL DATABASE - ADMINISTRADOR DEL SERVIDOR
 --------------------------------------------------------------
 Servidor        : sql-pacientes-matias-26.database.windows.net
 Puerto          : 1433
 Usuario admin   : adminsql
-Contrasena      : <CONTRASENA_SQL>
+Contrasena      : <CONTRASENA_ADMIN_SQL>
 
 Bases de datos  : PacientesDB
                   HistorialDB
 
-Formato de la cadena de conexion:
+Este usuario solo se emplea para tareas administrativas:
+crear las tablas y los usuarios de cada microservicio.
+Los microservicios NO se conectan con el.
+
+--------------------------------------------------------------
+2. USUARIOS DEDICADOS POR BASE DE DATOS
+--------------------------------------------------------------
+Cada microservicio se conecta con su propio usuario, que tiene
+permisos de lectura y escritura unicamente sobre su base. Es el
+principio de minimo privilegio: si un servicio se viera
+comprometido, el acceso queda limitado a sus propios datos.
+
+Base PacientesDB
+  Usuario       : usuario_pacientes
+  Contrasena    : <CONTRASENA_USUARIO_PACIENTES>
+  Roles         : db_datareader, db_datawriter
+
+Base HistorialDB
+  Usuario       : usuario_historialclinico
+  Contrasena    : <CONTRASENA_USUARIO_HISTORIAL>
+  Roles         : db_datareader, db_datawriter
+
+Ninguno de los dos puede crear o alterar tablas, ni acceder a
+la base del otro microservicio.
+
+--------------------------------------------------------------
+3. FORMATO DE LAS CADENAS DE CONEXION
+--------------------------------------------------------------
+
+En Azure (Encrypt obligatorio):
+
 Server=tcp:<SERVIDOR>.database.windows.net,1433;
 Database=<NOMBRE_BASE>;
 User ID=<USUARIO>;
-Password=<CONTRASENA_SQL>;
+Password=<CONTRASENA>;
 Encrypt=True;
 TrustServerCertificate=False;
 
+En local con Docker Compose:
+
+Server=host.docker.internal,1433;
+Database=<NOMBRE_BASE>;
+User Id=<USUARIO>;
+Password=<CONTRASENA>;
+TrustServerCertificate=True;
+Encrypt=False;
+
+Nota: en el docker-compose.yml la cadena va en una sola linea y
+entre comillas dobles. El bloque >- de YAML inserta espacios
+entre lineas y rompe las contrasenas con caracteres especiales.
+
 --------------------------------------------------------------
-2. AZURE CONTAINER REGISTRY
+4. AZURE CONTAINER REGISTRY
 --------------------------------------------------------------
 Servidor        : acrpacientesmatias.azurecr.io
 Usuario         : acrpacientesmatias
@@ -38,23 +82,30 @@ Para obtener la contrasena real:
 az acr credential show --name acrpacientesmatias --query "passwords[0].value" -o tsv
 
 --------------------------------------------------------------
-3. JWT (servicio OAuthJWT)
+5. JWT (servicio OAuthJWT)
 --------------------------------------------------------------
 Key             : <CLAVE_JWT_SECRETA>
 Issuer          : OAuthJWT
 Audience        : MicroserviciosPacientes
 ExpireMinutes   : 60
 
-NOTA: los tres microservicios (OAuthJWT, Pacientes.Api e
-HistorialClinico.Api) deben compartir exactamente la misma Key,
-Issuer y Audience. Si alguno difiere, el token es rechazado
-aunque sea valido.
+Los tres servicios (OAuthJWT, Pacientes.Api e
+HistorialClinico.Api) comparten exactamente la misma Key,
+Issuer y Audience. OAuthJWT firma el token con esa clave y los
+microservicios verifican la firma con la misma. Si alguno de
+los tres valores difiere, el token es rechazado aunque sea
+legitimo.
+
+Un JWT no es secreto, es firmado: cualquiera puede leer su
+contenido, pero nadie puede modificarlo sin conocer la clave.
 
 --------------------------------------------------------------
-4. RABBITMQ
+6. RABBITMQ
 --------------------------------------------------------------
-Host interno    : rabbitmq
+Host en Azure   : rabbitmq  (nombre del Container App)
+Host en local   : rabbitmq  (nombre del servicio en Compose)
 Puerto AMQP     : 5672
+Puerto panel    : 15672  (solo disponible en local)
 Usuario         : <USUARIO_RABBITMQ>
 Contrasena      : <CONTRASENA_RABBITMQ>
 
@@ -62,27 +113,45 @@ Colas utilizadas:
   paciente_creado
   paciente_desactivado
 
+En Azure el servicio se desplego con ingress interno, por lo
+que no tiene URL publica ni panel de administracion accesible
+desde internet.
+
 --------------------------------------------------------------
-5. USUARIOS DE PRUEBA DEL SISTEMA
+7. SECRETOS CONFIGURADOS EN AZURE
 --------------------------------------------------------------
-Estos usuarios estan definidos en el AuthController del servicio
-OAuthJWT y sirven para obtener el token JWT. No son credenciales
-de infraestructura, sino datos de uso de la aplicacion, por eso
-se documentan con sus valores reales:
+Nombres de los secretos en cada Container App. Los valores
+quedan ocultos: al inspeccionar la configuracion solo se ve el
+nombre y la referencia secretref.
+
+oauthjwt   : jwt-key
+pacientes  : pacientes-sql, rabbitmq-password, jwt-key
+historial  : historial-sql, rabbitmq-password, jwt-key
+
+--------------------------------------------------------------
+8. USUARIOS DE PRUEBA DEL SISTEMA
+--------------------------------------------------------------
+Definidos en el AuthController del servicio OAuthJWT. No son
+credenciales de infraestructura sino datos de uso de la
+aplicacion, por eso se documentan con sus valores reales para
+que puedan probarse los endpoints:
 
 Usuario: admin    Password: 1234    Rol: Administrador
 Usuario: medico   Password: 1234    Rol: Usuario
 
-El rol Administrador puede crear, editar y eliminar.
-El rol Usuario solo puede consultar.
+El rol Administrador puede consultar, crear, editar y eliminar.
+El rol Usuario solo puede consultar: si intenta crear, recibe
+403 Forbidden.
 
 --------------------------------------------------------------
 RECOMENDACIONES DE SEGURIDAD
 --------------------------------------------------------------
-- Las contrasenas deben combinar mayusculas, minusculas,
-  numeros y caracteres especiales.
-- No reutilizar contrasenas personales.
-- Generar las claves con un generador de contrasenas confiable.
+- Las contrasenas combinan mayusculas, minusculas, numeros y
+  caracteres especiales.
+- Se generaron con un generador de contrasenas y no reutilizan
+  contrasenas personales.
+- Evitar los caracteres ; y ' en las contrasenas: el punto y
+  coma separa los campos de una cadena de conexion.
 - No publicar contrasenas reales, JWT Keys ni secretos en un
   repositorio publico.
 ==============================================================
